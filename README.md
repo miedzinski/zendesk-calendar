@@ -7,8 +7,8 @@ Synchronize tickets in Zendesk with Google Calendar events.
 This application allows you to automatically insert events into Google Calendar whenever an agent gets ticket.
 Currently editing event from calendar doesn't modify ticket.
 
-Event's dates are taken from 4 custom ticket fields - start date, start end, end date, end time.
-You need to add them manually . Because Zendesk lacks timepicker field, I've created small plugin that adds nice datetimepicker as iframe.
+Events' dates are taken from 4 custom ticket fields - start date, start end, end date, end time.
+You need to add them manually. Because Zendesk lacks timepicker field, I've created small plugin that adds nice datetimepicker as iframe.
 Please see [this GitHub repo](https://github.com/miedzinski/zendesk-calendar-app).
 
 ## Requirements ##
