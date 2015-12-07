@@ -11,6 +11,10 @@ Events' dates are taken from 4 custom ticket fields - start date, start end, end
 You need to add them manually. Because Zendesk lacks timepicker field, I've created small plugin that adds nice datetimepicker as iframe.
 Please see [this GitHub repo](https://github.com/miedzinski/zendesk-calendar-app).
 
+Additionally, you will need to add 2 triggers in Zendesk admin panel - for POST and PUT endpoints (ticket creation and ticket update).
+
+If you need a better solution, check [Cronofy](https://zendesk.cronofy.com).
+
 ## Requirements ##
 
 Python 3 (tested on 3.4.3) and Redis.
