@@ -45,11 +45,9 @@ def insert_event(profile_id, event, ticket_id=None):
             pass
 
     if event_id:
-        # this approach will delete any custom properties set by gcal user
-        # e.g. reminders
-        res = service.events().update(calendarId='primary',
-                                      eventId=event_id,
-                                      body=event).execute()
+        res = service.events().patch(calendarId='primary',
+                                     eventId=event_id,
+                                     body=event).execute()
     else:
         res = service.events().insert(calendarId='primary',
                                       body=event).execute()
