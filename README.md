@@ -5,7 +5,7 @@ Synchronize tickets in Zendesk with Google Calendar events.
 ## Details ##
 
 This application allows you to automatically insert events into Google Calendar whenever an agent gets ticket.
-Currently editing event from calendar doesn't modify ticket.
+Similarly, editting events in calendar updates Zendesk tickets.
 
 Events' dates are taken from 4 custom ticket fields - start date, start end, end date, end time.
 You need to add them manually. Because Zendesk lacks timepicker field, I've created small plugin that adds nice datetimepicker as iframe.
@@ -25,11 +25,17 @@ Python 3 (tested on 3.4.3) and Redis.
     $ cd zendesk-calendar
     $ mkvirtualenv zendesk-calendar
     $ pip install -r requirements.txt
+    $ cp zendesk/settings.py.example zendesk/settings.py
     
 Edit `settings.py` and make sure you have Redis server up.
 
     $ python run.py # in production use gunicorn or alternative
-    $ celery -A zendesk.tasks:celery worker
+    $ celery -A zendesk:celery worker
+
+Don't forget to setup ticket fields in Zendesk admin panel.
+Start date and end date should be of type `Date`, start time and end time should be `Text` or `Regular Expression`. Example time regexp:
+
+    ^([0-1][0-9]|2[0-3]):[0-5][0-9]$
 
 ## License ##
 

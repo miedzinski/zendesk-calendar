@@ -22,3 +22,5 @@ ZENDESK_FIELD_IDS = {
 GOOGLE_CLIENT_ID = 'secret.apps.googleusercontent.com'
 GOOGLE_CLIENT_SECRET = 'secret'
 GOOGLE_REQUEST_SCOPE = 'https://www.googleapis.com/auth/calendar'
+
+SERVER_NAME = 'company.com'

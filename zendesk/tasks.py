@@ -1,32 +1,14 @@
 import datetime
+import math
 import urllib.parse
 
-from celery import Celery
-from zdesk import Zendesk
-from dateutil.parser import parse
+from flask_restful import url_for
+from googleapiclient.errors import HttpError
+from dateutil.parser import parse as parse_date
 
-from . import app, redis
-from .helpers import build_service_from_id, fields_to_dict, friendly_to_tz
-
-
-celery = Celery(app.import_name, broker=app.config['CELERY_BROKER_URL'])
-celery.conf.update(app.config)
-TaskBase = celery.Task
-
-
-class ContextTask(TaskBase):
-    abstract = True
-
-    def __call__(self, *args, **kwargs):
-        with app.app_context():
-            return TaskBase.__call__(self, *args, **kwargs)
-
-celery.Task = ContextTask
-
-zendesk = Zendesk(zdesk_url=app.config['ZENDESK_URL'],
-                  zdesk_email=app.config['ZENDESK_EMAIL'],
-                  zdesk_password=app.config['ZENDESK_TOKEN'],
-                  zdesk_token=True)
+from . import app, celery, redis, zendesk
+from .helpers import (build_service_from_id, decode_dict,
+                      fields_to_dict, friendly_to_tz)
 
 
 def insert_event(profile_id, event, ticket_id=None):
@@ -39,7 +21,7 @@ def insert_event(profile_id, event, ticket_id=None):
 
     if ticket_id:
         try:
-            event_id = redis.get('ticket_%s' % ticket_id).decode()
+            event_id = redis.get('ticket:%s' % ticket_id).decode()
         except AttributeError:
             # no value for given key, code fails on .decode()
             pass
@@ -69,10 +51,10 @@ def fetch_ticket(ticket_id, overwrite=False):
     field_ids = app.config['ZENDESK_FIELD_IDS']
     custom_fields = fields_to_dict(ticket['custom_fields'])
 
-    start_date = parse(custom_fields[field_ids['start_date']]).date()
-    start_time = parse(custom_fields[field_ids['start_time']]).time()
-    end_date = parse(custom_fields[field_ids['end_date']]).date()
-    end_time = parse(custom_fields[field_ids['end_time']]).time()
+    start_date = parse_date(custom_fields[field_ids['start_date']]).date()
+    start_time = parse_date(custom_fields[field_ids['start_time']]).time()
+    end_date = parse_date(custom_fields[field_ids['end_date']]).date()
+    end_time = parse_date(custom_fields[field_ids['end_time']]).time()
 
     start = datetime.datetime.combine(start_date, start_time)
     end = datetime.datetime.combine(end_date, end_time)
@@ -102,5 +84,140 @@ def fetch_ticket(ticket_id, overwrite=False):
     else:
         event_id = insert_event(assignee_id, event, ticket_id)
 
-    if event_id:
-        redis.set('ticket_%s' % ticket_id, event_id.encode())
+    redis.set('ticket:%s' % ticket_id, event_id.encode())
+    redis.set('event:%s' % event_id, str(ticket_id).encode())
+
+    return event
+
+
+def remove_channel(profile_id):
+    service = build_service_from_id(profile_id)
+    key = 'notifications:%s' % profile_id
+    channel = decode_dict(redis.hgetall(key))
+
+    if channel:
+        try:
+            service.channels().stop(body=channel).execute()
+        except HttpError as e:
+            if e.resp.status != 404:
+                raise
+                # in case of 404 channel doesn't exist anymore
+                # but that's what we wanted, so everything is okay
+
+
+@celery.task(bind=True)
+def setup_channel(self, profile_id):
+    service = build_service_from_id(profile_id)
+
+    from .api import CalendarEvent
+
+    body = {
+        'id': self.request.id,
+        'token': app.config['API_TOKEN'],
+        'type': 'web_hook',
+        'address': url_for(CalendarEvent.endpoint,
+                           profile_id=profile_id,
+                           _external=True,
+                           _scheme='https'),
+        'params': {
+            'ttl': 2592000  # 30 days, maximum allowed
+        }
+    }
+
+    res = service.events().watch(calendarId='primary', body=body).execute()
+
+    expiration_timestamp = int(res['expiration']) // 1000
+    expiration = datetime.datetime.utcfromtimestamp(expiration_timestamp)
+    # channel was requested for one month, it's safe to renew it one day sooner
+    eta = expiration - datetime.timedelta(days=1)
+
+    setup_channel.apply_async((profile_id, ), eta=eta)
+
+    return res
+
+
+@celery.task
+def save_channel(profile_id, channel):
+    remove_channel(profile_id)
+    redis.hmset('notifications:%s' % profile_id, channel)
+
+    return channel
+
+
+@celery.task
+def sync_page(events):
+    """
+    Updates up to 100 tickets from given events.
+    """
+    field_ids = app.config['ZENDESK_FIELD_IDS']
+    tickets = []
+
+    for event in events:
+        try:
+            ticket_id = redis.get('event:%s' % event['id']).decode()
+        except AttributeError:
+            # no value for given key, code fails on .decode()
+            continue
+
+        start_datetime = parse_date(event['start']['dateTime'])
+        start_date = start_datetime.strftime('%Y-%m-%d')
+        start_time = start_datetime.strftime('%H:%M')
+
+        end_datetime = parse_date(event['end']['dateTime'])
+        end_date = end_datetime.strftime('%Y-%m-%d')
+        end_time = end_datetime.strftime('%H:%M')
+
+        ticket = {
+            'id': ticket_id,
+            'custom_fields': [
+                {'id': field_ids['start_date'], 'value': start_date},
+                {'id': field_ids['start_time'], 'value': start_time},
+                {'id': field_ids['end_date'], 'value': end_date},
+                {'id': field_ids['end_time'], 'value': end_time}
+            ]
+        }
+
+        tickets.append(ticket)
+
+    zendesk.tickets_update_many({'tickets': tickets})
+
+    return tickets
+
+
+@celery.task
+def make_sync(profile_id):
+    service = build_service_from_id(profile_id)
+
+    try:
+        sync_token = redis.get('sync:%s' % profile_id).decode()
+    except AttributeError:
+        # no value for given key, code fails on .decode()
+        sync_token = None
+
+    page_token = None
+    while True:
+        try:
+            events = service.events().list(calendarId='primary',
+                                           pageToken=page_token,
+                                           syncToken=sync_token).execute()
+        except HttpError as e:
+            if e.resp.status != 410:
+                raise
+            # sync token invalidated, full sync required
+            sync_token = None
+            redis.delete('sync:%s' % profile_id)
+            continue
+
+        batch_size = 100
+        batch_len = math.ceil(len(events['items']) / batch_size)
+
+        for i in range(batch_len):
+            offset = i * 100
+            sync_page.delay(events['items'][offset:offset + batch_size])
+
+        page_token = events.get('nextPageToken')
+        if not page_token:
+            sync_token = events.get('nextSyncToken')
+            break
+
+    redis.set('sync:%s' % profile_id, sync_token.encode())
