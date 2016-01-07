@@ -179,7 +179,8 @@ def sync_page(events):
 
         tickets.append(ticket)
 
-    zendesk.tickets_update_many({'tickets': tickets})
+    if tickets:
+        zendesk.tickets_update_many({'tickets': tickets})
 
     return tickets
 
