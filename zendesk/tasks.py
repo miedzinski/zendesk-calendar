@@ -210,10 +210,12 @@ def make_sync(profile_id):
             continue
 
         batch_size = 100
-        batch_len = math.ceil(len(events['items']) / batch_size)
+        batch_len, rem = divmod(len(events['items']), batch_size)
+        if rem > 0:
+            batch_len += 1
 
         for i in range(batch_len):
-            offset = i * 100
+            offset = i * batch_size
             sync_page.delay(events['items'][offset:offset + batch_size])
 
         page_token = events.get('nextPageToken')
