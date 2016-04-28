@@ -44,9 +44,10 @@ def fetch_ticket(ticket_id, overwrite=False):
     assignee_id = ticket['assignee_id']
 
     summary = ticket['subject']
-    description = ticket['description']
     url = urllib.parse.urljoin(app.config['ZENDESK_URL'],
                                'tickets/%d/' % ticket_id)
+
+    description = '%s\n%s' % (url, ticket['description'])
 
     field_ids = app.config['ZENDESK_FIELD_IDS']
     custom_fields = fields_to_dict(ticket['custom_fields'])
