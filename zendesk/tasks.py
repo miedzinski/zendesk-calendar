@@ -103,6 +103,8 @@ def remove_channel(profile_id):
                 raise
                 # in case of 404 channel doesn't exist anymore
                 # but that's what we wanted, so everything is okay
+        finally:
+            celery.control.revoke(channel['id'])
 
 
 @celery.task(bind=True)
