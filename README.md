@@ -31,6 +31,7 @@ Edit `settings.py` and make sure you have Redis server up.
 
     $ python run.py # in production use gunicorn or alternative
     $ celery -A zendesk:celery worker
+    $ celery -A zendesk:celery beat
 
 Don't forget to setup ticket fields in Zendesk admin panel.
 Start date and end date should be of type `Date`, start time and end time should be `Text` or `Regular Expression`. Example time regexp:
