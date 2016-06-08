@@ -28,14 +28,26 @@ def insert_event(profile_id, event, ticket_id=None):
     If given ticket_id, tries to update an existing event.
     """
     service = build_service_from_id(profile_id)
+    old_profile_id = None
     event_id = None
 
     if ticket_id:
+        key = 'ticket:%s' % ticket_id
+        ticket_data = decode_dict(redis.hgetall(key))
+        old_profile_id = ticket_data.get('profile_id', 0)
+        event_id = ticket_data.get('event_id')
+
+    if old_profile_id is not None and old_profile_id != profile_id:
         try:
-            event_id = redis.get('ticket:%s' % ticket_id).decode()
-        except AttributeError:
-            # no value for given key, code fails on .decode()
+            build_service_from_id(old_profile_id).events().delete(
+                calendarId='primary',
+                eventId=event_id,
+                sendNotifications=False,
+            ).execute()
+        except HttpError:
             pass
+        redis.delete('event:%s' % event_id)
+        event_id = None
 
     if event_id:
         res = service.events().patch(calendarId='primary',
@@ -95,7 +107,10 @@ def fetch_ticket(ticket_id, overwrite=False):
     else:
         event_id = insert_event(assignee_id, event, ticket_id)
 
-    redis.set('ticket:%s' % ticket_id, event_id.encode())
+    redis.hmset('ticket:%s' % ticket_id, {
+        'event_id': event_id.encode(),
+        'profile_id': str(assignee_id).encode(),
+    })
     redis.set('event:%s' % event_id, str(ticket_id).encode())
 
     return event
