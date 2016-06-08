@@ -1,6 +1,7 @@
 import datetime
-import math
+import time
 import urllib.parse
+import uuid
 
 from flask_restful import url_for
 from googleapiclient.errors import HttpError
@@ -9,6 +10,16 @@ from dateutil.parser import parse as parse_date
 from . import app, celery, redis, zendesk
 from .helpers import (build_service_from_id, decode_dict,
                       fields_to_dict, friendly_to_tz)
+
+
+celery.conf.update(
+    CELERYBEAT_SCHEDULE={
+        'renew-channels': {
+            'task': 'zendesk.tasks.renew_channels',
+            'schedule': datetime.timedelta(minutes=1),
+        }
+    },
+)
 
 
 def insert_event(profile_id, event, ticket_id=None):
@@ -101,20 +112,16 @@ def remove_channel(profile_id):
         except HttpError as e:
             if e.resp.status != 404:
                 raise
-                # in case of 404 channel doesn't exist anymore
-                # but that's what we wanted, so everything is okay
-        finally:
-            celery.control.revoke(channel['id'])
 
 
-@celery.task(bind=True)
-def setup_channel(self, profile_id):
+@celery.task
+def setup_channel(profile_id):
     service = build_service_from_id(profile_id)
 
     from .api import CalendarEvent
 
     body = {
-        'id': self.request.id,
+        'id': uuid.uuid4().hex,
         'token': app.config['API_TOKEN'],
         'type': 'web_hook',
         'address': url_for(CalendarEvent.endpoint,
@@ -122,18 +129,14 @@ def setup_channel(self, profile_id):
                            _external=True,
                            _scheme='https'),
         'params': {
-            'ttl': 2592000  # 30 days, maximum allowed
+            'ttl': '2592000'  # 30 days, maximum allowed
         }
     }
 
     res = service.events().watch(calendarId='primary', body=body).execute()
 
-    expiration_timestamp = int(res['expiration']) // 1000
-    expiration = datetime.datetime.utcfromtimestamp(expiration_timestamp)
-    # channel was requested for one month, it's safe to renew it one day sooner
-    eta = expiration - datetime.timedelta(days=1)
-
-    setup_channel.apply_async((profile_id, ), eta=eta)
+    expiration = int(res['expiration']) // 1000
+    redis.zadd('schedule', expiration, profile_id)
 
     return res
 
@@ -144,6 +147,17 @@ def save_channel(profile_id, channel):
     redis.hmset('notifications:%s' % profile_id, channel)
 
     return channel
+
+
+@celery.task
+def renew_channels():
+    now = int(time.time())
+    profile_ids = [int(x) for x in redis.zrangebyscore('schedule', 0, now)]
+
+    for profile_id in profile_ids:
+        setup_channel.delay(profile_id)
+
+    return profile_ids
 
 
 @celery.task
