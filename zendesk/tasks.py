@@ -182,7 +182,7 @@ def sync_page(events):
     Updates up to 100 tickets from given events.
     """
     field_ids = app.config['ZENDESK_FIELD_IDS']
-    tickets = []
+    tickets = {}
 
     for event in events:
         try:
@@ -209,10 +209,10 @@ def sync_page(events):
             ]
         }
 
-        tickets.append(ticket)
+        tickets[ticket_id] = ticket
 
     if tickets:
-        zendesk.tickets_update_many({'tickets': tickets})
+        zendesk.tickets_update_many({'tickets': list(tickets.values())})
 
     return tickets
 
