@@ -65,10 +65,11 @@ def fetch_ticket(ticket_id, overwrite=False):
     ticket = zendesk.ticket_show(id=ticket_id)['ticket']
 
     assignee_id = ticket['assignee_id']
+    requester_id = ticket['requester_id']
 
     summary = ticket['subject']
     url = urllib.parse.urljoin(app.config['ZENDESK_URL'],
-                               'tickets/%d/' % ticket_id)
+                               '/users/%d/' % requester_id)
 
     description = '%s\n%s' % (url, ticket['description'])
 
